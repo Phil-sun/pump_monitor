@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>ECharts3 Ajax</title>
+    <script src="{{ url_for('static', filename='jquery-3.2.1.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='echarts.js') }}"></script>
+
+    <style>
+        select{
+			width:150px;
+			height:25px;
+			font-size:1.2em;
+			border: solid 1px #000;
+			border-radius:5px;
+			appearance:none;
+			-moz-appearance:none;
+			-webkit-appearance:none;
+			/*background: url(../image/arrow.png)  no-repeat scroll right center transparent;*/
+			}
+    </style>
+</head>
+
+
+<body>
+    <select id="EffectiveDateSel" onChange="DispayPrice();">
+
+                <option>井号 <b class="caret"></b></option>
+                <option value="">CFD11-1-A29H</option>
+                <option value="">CFD11-1-A16H</option>
+<!--                <option value="">兰州市</option>-->
+<!--                <option value="">广州市</option>-->
+
+    </select>
+    <span id="cityse">     </span>
+
+    <!--为ECharts准备一个具备大小（宽高）的Dom-->
+    <div id="main" style="height:500px;border:1px solid #ccc;padding:10px;"></div>
+
+    <script>
+        function DispayPrice()
+            {
+                var nSel = document.getElementById("EffectiveDateSel");
+                console.log("nSel:",nSel);
+                var index = nSel.selectedIndex; // 选中索引
+                var text = nSel.options[index].text; // 选中文本
+                var value= nSel.options[index].value;
+                //document.getElementById("cityse").innerHTML=text+"----"+value;
+
+                // var jh = "CFD11-1-A29H";
+                var jh = text;
+                echarts_paint(jh);
+
+            }
+    </script>
+
+    <script type="text/javascript">
+    function echarts_paint(jh) {
+        var myChart = echarts.init(document.getElementById('main'));
+
+    // 显示标题，图例和空的坐标轴
+    myChart.setOption({
+        title: {
+            text: jh,   //'Pstatus 检测',
+            // left:'center'
+        },
+        tooltip: {},
+        toolbox: {
+            feature: {
+                dataZoom: {
+                    yAxisIndex: 'none'
+                },
+                restore: {},
+                saveAsImage: {},
+                dataView:{show:true}
+            }
+        },
+        legend: {
+            //data:['日期','predict']
+        },
+        xAxis: {
+            name:'日期',
+            nameLocation:'middle',
+            nameGap:25,
+            type: 'category',
+            boundaryGap: false,
+            data: []
+        },
+        yAxis: [
+            {//第一个y轴位置在左侧
+                position:'left',
+                type:'value',
+                name:'特征值',
+                nameLocation:'center',
+                nameGap:50,
+                nameTextStyle:{
+                    fontSize:16,
+                    fontWeight:'bolder'
+                },
+                axisLine:{
+                    lineStyle:{
+                        color:'#004E52'
+                    }
+                },
+                axisLabel: {
+                    //formatter:'{value} 个'
+                }
+            },
+
+            {//第二个y轴在右侧
+                position:'right',
+                //offset:70
+                type:'value',
+                max:1,min:0,splitNumber:1,
+                name:'状态',
+                nameLocation:'center',
+                // nameGap:50,
+                nameTextStyle: {
+                    fontSize: 16,//正常是不用添加
+                    fontWeight:'bolder'
+                },
+                inverse:true,
+                axisLabel:{
+                    formatter: function (value) {
+                        var texts = [];
+                        if(value==0){
+                        texts.push('正常');
+                        }
+                        else if (value==1) {
+                        texts.push('异常');
+                        }
+                        else{
+                        //texts.push('其它');
+                        texts.push(value);
+                        }
+                        return texts;
+                        //return value;
+                    }
+                }
+            }
+        ],
+        dataZoom: [
+        {
+            type: 'slider',
+            xAxisIndex: 0,
+            filterMode: 'empty'
+        },
+        {
+            type: 'inside',
+            xAxisIndex: 0,
+            filterMode: 'empty'
+        }
+    ],
+        // series: [{
+        //     name: 'Pstatus',
+        //     type: 'line',
+        //     data: []
+        // }
+        // ]
+        series:[]
+    });
+
+    myChart.showLoading(); // 显示加载动画
+
+    var jh_path = '/Pstatus/' + jh;
+    // 异步加载数据
+    $.get(jh_path).done(function (data) {
+        myChart.hideLoading(); // 隐藏加载动画
+
+        // 填入数据
+        console.log('data:',data);
+        //var col_name=['日期', '电机温度', '运行电压', '泵出口压力', '泵入口压力', 'A相运行电流', '油压', '泵入口温度', '油温', '预测结果'];
+        //var col_name = ['日期', '油压', '泵出口压力', '泵入口温度', 'A相运行电流', '泵入口压力', '电机温度', '运行电压', '油温', 'predict']
+        var col_name = data['col_name'];
+        console.log('col_name,',col_name);
+        var series_data = [];
+        for (let c of col_name.slice(1)){
+            var yIndex;
+            console.log("c:",c);
+            console.log("col_name[col_name.length-1]:",col_name[col_name.length-1]);
+            if (c==col_name[col_name.length-1]){
+                yIndex=1;
+            }else{
+                yIndex=0;
+            }
+
+            var obj = {
+                name:c,
+                type:'line',
+                yAxisIndex:yIndex,
+                data:data[c]
+            };
+            series_data.push(obj);
+        }
+        console.log("series_data:",series_data)
+
+
+        myChart.setOption({
+
+        tooltip: {
+                trigger:'axis',
+                position: function (pt) {
+                    //console.log(pt);
+                    return [pt[0], 30];
+                },
+                formatter: function (params) {
+                    // console.log("params",params);
+                    // console.log("data:",data);
+                    // console.log("data[0]:",data[0]);
+                    // console.log("params[0].dataIndex:",params.dataIndex)
+
+                    //var res='<div><p>时间：'+params[0].name+'</p></div>'
+                    // for(var i=0;i<params.length;i++){
+                    //     res+='<p>'+params[i].seriesName+':'+params[i].data+'</p>'
+                    // }
+                    //res += '<p>'+da[params[0].dataIndex]+':'+params[0].data+'</p>'
+                    //for(var k in data)
+                    //{
+                    //    res += '<p>'+k+':'+data[k][params[0].dataIndex]+'</p>'
+                    //}
+                    var res='<div><p>'+col_name[0]+':'+data[col_name[0]][params[0].dataIndex]+'</p></div>'
+                    for(var j = 1; j < col_name.length; j++)
+                    {
+                        res += '<p>'+col_name[j]+':'+data[col_name[j]][params[0].dataIndex]+'</p>'
+                    }
+
+                    return res;
+                },
+
+            },
+            toolbox: {
+            feature: {
+                dataView: {show: true, readOnly: false,
+                    optionToContent: function(opt){
+                        console.info("opt:",opt);
+                        //var ta = '<textarea rows="10" cols="30">';
+                        var ta = '<textarea rows="100" cols="200">';
+                        for(var i=0;i<col_name.length;i++)
+                        {
+                            ta += col_name[i]+'\t';
+                        }
+                        ta += '\n'
+                        for(var j = 0; j < data[col_name[0]].length; j++)
+                        {
+                            for(var i=0;i<col_name.length;i++)
+                            {
+                                ta += data[col_name[i]][j] + '\t'
+                            }
+                            ta += '\n'
+                        }
+                        ta += '</textarea>'
+                        return ta
+                    }
+
+                }
+            }
+        },
+
+            xAxis: {
+                data: data[col_name[0]]
+            },
+            // series: [{
+            //     name: 'Pstatus', // 根据名字对应到相应的系列
+            //     data: data[col_name[col_name.length-1]].map(parseFloat) // 转化为数字（注意map）
+            // }
+            // ]
+            series:series_data
+        });
+    });
+    }
+    </script>
+
+    <div>
+        <a href="/download/CFD11-1-A29H.csv" style="text-decoration:none;" >数据文件下载</a>
+    </div>
+</body>
+</html>

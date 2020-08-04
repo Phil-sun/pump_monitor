@@ -1,0 +1,469 @@
+from sklearn.ensemble import RandomForestRegressor,RandomForestClassifier
+import pandas as pd
+from sklearn import metrics
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import MinMaxScaler,label_binarize
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import label_binarize
+from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.metrics import accuracy_score, confusion_matrix, precision_score, recall_score
+from sklearn.metrics import f1_score as f1,accuracy_score,roc_auc_score,make_scorer
+from sklearn.metrics import confusion_matrix as con
+import numpy as np
+import pickle
+import warnings
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import BaggingClassifier
+
+from DBHandler import DBHandler
+import data_api
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.schedulers.blocking import BlockingScheduler
+import datetime
+
+import tensorflow as tf
+
+# 忽略一些版本不兼容等警告
+warnings.filterwarnings("ignore")
+
+
+jh = "CFD11-1-A29H"
+
+def train_model():
+    ''' 训练模型 '''
+    '''一、读取文件'''
+    # csv文件路径，放在当前py文件统一路径(存放路径自己选择)
+    train_file_path = 'data/6-CFD22-1-A37H.csv'
+    all_data = pd.read_csv(train_file_path)
+    all_data.fillna(value=0, inplace=True)
+    # item_data = all_data.drop(['Date',' Time','predict'], axis=1)
+    item_data = all_data.drop(['Date', ' Time', 'predict','泵入口温度','电机温度','油温'], axis=1)
+    feat_labels = item_data.columns
+
+    # 归一化
+    print("归一化")
+    mm= MinMaxScaler()
+    x = mm.fit_transform(item_data)
+    y = all_data["predict"]
+
+    '''二、确认预测特征变量和选择要训练的特征'''
+    # 要训练的特征列表
+    # predictor_cols = ['油压','泵出口压力','泵入口温度','A相运行电流','泵入口压力','电机温度','运行频率','漏电电流','运行电压','油温','油嘴开度']
+
+    # 数据拆分
+    print("数据拆分")
+    x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.25)
+
+
+    '''三、创建模型和训练'''
+    # 创建随机森林模型
+    my_model = RandomForestClassifier(max_depth=None, min_samples_split=2, random_state=0,max_features='auto')
+    # 把要训练的数据丢进去，进行模型训练
+    result = my_model.fit(x_train,y_train)
+    print("模型训练")
+    # print('result',result)
+
+    #构建决策树模型
+    # tree = DecisionTreeClassifier(criterion='entropy', max_depth=None)
+    #
+    # #构建bagging分类器
+    # bag = BaggingClassifier(base_estimator=tree, n_estimators=500, max_samples=1.0,
+    #                         max_features=1.0,bootstrap=True, bootstrap_features=False,
+    #                         n_jobs=1, random_state=1)
+
+    # 保存模型
+    # 保存Model(注:save文件夹要预先建立，否则会报错)
+    print("保存Model")
+    with open('model/my_model.pickle', 'wb') as f:
+        pickle.dump(my_model, f)
+
+
+    '''四、用测试集预测'''
+    predicted_result = my_model.predict(x_test)
+    # predict_proba返回的是一个 n 行 k 列的数组，
+    # 第 i 行 第 j 列上的数值是模型预测 第 i 个预测样本为某个标签的概率，并且每一行的概率和为1。
+    # predictions = my_model.predict_proba(x_test)
+    forest_score=my_model.score(x_test,y_test)
+
+    ####打印混淆矩阵
+    print('\n'+'混淆矩阵：')
+    print(con(y_test,predicted_result))
+
+    ###打印F1得分
+    print('\n'+'F1 Score：')
+    print(f1(y_test,predicted_result))
+
+    ##打印测试精确率
+    print('\n'+'Accuracy:')
+    # print(metrics.score(y_test,predicted_result))
+    print(metrics.accuracy_score(y_test,predicted_result))
+
+    # 模型准确率
+    # print('\n'+'Precision:')
+    # print(metrics.precision_score(y_test,predicted_result))
+
+    # #模型召回率
+    print('\n'+'Recall:')
+    print(metrics.recall_score(y_test,predicted_result))
+
+
+    print('总的测试数据量：' + str(len(predicted_result)))
+    # print('预测错误的数量：' + str(f))
+
+    '''五、计算AUC的值'''
+    y_test_hot = label_binarize(y_test,classes =(0, 1)) # 将测试集标签数据用二值化编码的方式转换为矩阵
+    forest_y_score=my_model.predict_proba(x_test)
+    forest_fpr,forest_tpr,forest_threasholds=metrics.roc_curve(y_test_hot.ravel(),forest_y_score[:,1].ravel())    # 计算ROC的值,forest_threasholds为阈值
+
+    forest_auc=metrics.auc(forest_fpr,forest_tpr) #_auc值
+    print('forest_auc',forest_auc)
+
+    '''六、使用(RMSE)均方对数误差是做评价指标'''
+    print('RMSE:',metrics.mean_squared_log_error(predicted_result, y_test))
+
+    '''七、把预测的值按照格式保存为csv文件'''
+    # my_submission = pd.DataFrame({'Id': test_data.Id, 'SalePrice': predicted_result})
+    # you could use any filename. We choose submission here
+    # my_submission.to_csv('modle/submission.csv', index=False)
+
+    '''八、下面对训练好的随机森林，完成重要性评估'''
+
+    # feature_importances_  可以调取关于特征重要程度
+    importances = my_model.feature_importances_
+    print('特征重要性：',importances)
+
+    # x_columns = all_data.columns[2:-1]
+    x_columns = feat_labels
+    print('x_columns',x_columns)
+    indices = np.argsort(importances)[::-1]
+
+    for f in range(x_train.shape[1]):
+    # # 对于最后需要逆序排序，我认为是做了类似决策树回溯的取值，从叶子收敛
+    # # 到根，根部重要程度高于叶子。
+        print("%2d) %-*s %f" % (f + 1, 30, feat_labels[indices[f]], importances[indices[f]]))
+
+
+def train_model_dnn():
+    # data = []
+    sess = tf.InteractiveSession()
+
+    x = tf.placeholder("float",shape=[None,100,5,1],name="x")
+    y_ = tf.placeholder("float",shape=[None,1])
+
+    #权重初始化
+    def weight_variable(shape):
+        initial = tf.truncated_normal(shape,stddev=0.1)
+        return tf.Variable(initial)
+
+    #偏置初始化
+    def bias_variable(shape):
+        initial = tf.constant(0.1,shape=shape)
+        return tf.Variable(initial)
+
+    #卷积
+    def conv2d(x,W,pad="SAME"):
+        return tf.nn.conv2d(x,W,strides=[1,1,1,1],padding=pad)
+
+    def max_pool_2x2(x):
+        return tf.nn.max_pool(x,ksize=[1,2,2,1],strides=[1,2,2,1],padding="SAME")
+    def max_pool_10x2(x):
+        return tf.nn.max_pool(x,ksize=[1,11,2,1],strides=[1,5,1,1],padding="VALID")
+
+    #第1层
+    W_conv1 = weight_variable([31,2,1,8])
+    b_conv1 = bias_variable([8])
+    # x_image = tf.reshape(x,[-1,28,28,1])
+    x_image = x
+    # h_conv1=(?, 70, 4, 8)
+    h_conv1 = tf.nn.relu(conv2d(x_image,W_conv1,"VALID") + b_conv1)
+    # #shape:[batch,50,3,8]
+    # h_pool1=(?, 12, 3, 8)
+    h_pool1 = max_pool_10x2(h_conv1)
+    print("h_pool1:",h_pool1)
+
+    # #第2层
+    # W_conv2 = weight_variable([2,2,8,16])
+    # b_conv2 = weight_variable([16])
+    # # 第2层h_pool2输出shape:[batch,25,2,16]
+    # h_conv2 = tf.nn.relu(conv2d(h_pool1,W_conv2) + b_conv2)
+    # h_pool2 = max_pool_2x2(h_conv2)
+
+    #第3层全连接层
+    W_fc1 = weight_variable([12*3*8,64])
+    b_fc1 = bias_variable([64])
+    # h_pool2_flat = tf.reshape(h_pool2,[-1,7*7*64])
+    h_pool2_flat = tf.reshape(h_pool1, [-1, 12 * 3 * 8])
+    h_fc1 = tf.nn.relu(tf.matmul(h_pool2_flat,W_fc1) + b_fc1)
+    print("h_fc1:",h_fc1)
+
+    #dropout
+    keep_prob = tf.placeholder("float",name="keep_prob")
+    h_fc1_drop = tf.nn.dropout(h_fc1,keep_prob)
+
+    # 输出层
+    W_fc2 = weight_variable([64,1])
+    b_fc2 = bias_variable([1])
+    # y_conv = tf.nn.softmax(tf.matmul(h_fc1_drop,W_fc2) + b_fc2)
+    y_conv = tf.nn.sigmoid(tf.matmul(h_fc1_drop,W_fc2) + b_fc2,name="y_conv")
+    print("y_conv:",y_conv)
+
+    #交叉熵
+    # cross_entropy = -tf.reduce_sum(y_ * tf.log(y_conv))
+    cross_entropy = -tf.reduce_mean(y_ * tf.log(tf.clip_by_value(y_conv,1e-10,1.0)) + (1-y_) * tf.log(tf.clip_by_value(1-y_conv,1e-10,1.0)))
+
+    #梯度下降
+    train_step = tf.train.AdamOptimizer(1e-4).minimize(cross_entropy)
+
+    #评估模型
+    # correct_predict = tf.equal(tf.argmax(y_conv,1),tf.arg_max(y_,1))
+    # accuracy = tf.reduce_mean(tf.cast(correct_predict,"float"))
+
+    #初始化变量
+    sess.run(tf.initialize_all_variables())
+    saver = tf.train.Saver(max_to_keep=5)
+
+
+    '''一、读取文件'''
+    # csv文件路径，放在当前py文件统一路径(存放路径自己选择)
+    train_file_path = "data/6-CFD22-1-A37H.csv"
+    all_data = pd.read_csv(train_file_path)
+    all_data.fillna(value=0, inplace=True)
+    # item_data = all_data.drop(['Date',' Time','predict'], axis=1)
+    # item_data = all_data.drop(['Date', ' Time', 'predict', '泵入口温度', '电机温度', '油温'], axis=1)
+    item_data = all_data.drop(['Date', ' Time', '泵入口温度', '电机温度', '油温'], axis=1)
+    feat_labels = item_data.columns
+    print("item_data.shape:",item_data.shape)
+
+    df_0 = item_data[item_data['predict']==0]
+    df_1 = item_data[item_data['predict']==1]
+    df_0 = df_0.iloc[:(df_0.shape[0]//100*100)]
+    df_1 = df_1.iloc[:(df_1.shape[0]//100*100)]
+    data_0 = df_0.values.reshape([-1,100,6,1])
+    index_0 = np.random.choice(data_0.shape[0],size=int(0.02*data_0.shape[0]),replace=False)
+    data_choice = data_0[index_0].reshape([-1,6])
+    df_process = pd.DataFrame(data_choice,columns=feat_labels)
+    df_balance = pd.concat([df_process,df_1],ignore_index=True)
+    b_y = df_balance['predict']
+    print("b_y:",b_y.value_counts())
+    print("b_y:",b_y.value_counts(normalize=True))
+    # df_balance.to_csv("data/6-CFD22-1-A37H_balance.csv",index=False)
+
+
+    # col_t = item_data.shape[0] // 100 * 100
+    # col_t = 1000
+    # block_data = np.reshape(item_data.values[:col_t,:],[-1,100,5,1])
+    df_feature = df_balance.drop(['predict'],axis=1)
+    block_data = np.reshape(df_feature.values, [-1, 100, 5, 1])
+    input_y = np.reshape(df_balance['predict'].values,[-1,100]).max(axis=1)
+    print("input_y:",pd.Series(input_y).value_counts())
+    print("input_y:", pd.Series(input_y).value_counts(normalize=True))
+    input_y = input_y[:,np.newaxis]
+    print("block_data.shape:",block_data.shape)
+    print("input_y.shape:",input_y.shape)
+    train_x,test_x,train_y,test_y = train_test_split(block_data,input_y,test_size=0.3)
+    print("test_y:",pd.Series(np.squeeze(test_y,axis=1)).value_counts())
+    print("test_y:", pd.Series(np.squeeze(test_y,axis=1)).value_counts(normalize=True))
+
+    for i in range(20000):
+        # print("step:",i)
+        batch = block_data
+        if i%1000 == 0:
+            # train_accuracy = accuracy.eval(feed_dict={x:test_x,y_:test_y,keep_prob:1.0})
+            ce = cross_entropy.eval(feed_dict={x:test_x,y_:test_y,keep_prob:1.0})
+            print("step {},training cross_entropy {}".format(i,ce))
+            # pred_y = y_conv.eval(feed_dict={x: test_x[:20], keep_prob: 1.0})
+            # for pred,real in zip(pred_y,test_y[:20]):
+            #     print(pred,real)
+        if i%5000 == 0:
+            saver.save(sess,'model/model.ckpt',global_step=i)
+            print("save model successfully")
+        train_step.run(feed_dict={x:train_x,y_:train_y,keep_prob:0.5})
+    print("test cross_entropy: ",cross_entropy.eval(feed_dict={x:test_x,y_:test_y,keep_prob:1.0}))
+    pred_y = y_conv.eval(feed_dict={x: test_x[:20], keep_prob: 1.0})
+    for pred, real in zip(pred_y, test_y[:20]):
+        print(pred, real)
+
+def train_lstm():
+    BATCH_SIZE = 100
+    input = []
+    # RNN
+    num_units = [64,128,256]
+    cells = [tf.nn.rnn_cell.LSTMCell(num_units=n) for n in num_units]
+    mul_cells = tf.nn.rnn_cell.MultiRNNCell(cells)
+    # state = mul_cells.zero_state(BATCH_SIZE,tf.float32)
+    outputs,states = tf.nn.dynamic_rnn(mul_cells,           # cell you have chosen
+                                       input,               # input
+                                       initial_state=None,  # the initial hidden state
+                                       dtype=tf.float32,    # must given if set initial_state = None
+                                       time_major=False     # False: (batch, time step, input); True: (time step, batch, input)
+                                       )
+    output = tf.layers.dense(outputs[:,-1,:],10)
+
+
+def predict_data(col, raw_data):
+    # col, raw_data = data_api.run(y_string,now_string)
+    # if len(raw_data) == 0:
+    #     return False
+    data_df = pd.DataFrame(raw_data, columns=col)
+    data_df.fillna(value=0, inplace=True)
+    # item_data = data_df.drop(['status', '日期', 'predict'], axis=1)
+    item_data = data_df.drop(['日期', 'predict'], axis=1)
+    # 归一化
+    print("归一化")
+    mm = MinMaxScaler()
+    x = mm.fit_transform(item_data)
+
+    # 读取Model
+    with open('model/my_model.pickle', 'rb') as f:
+        my_model = pickle.load(f)
+    predicted_result = my_model.predict(x)
+
+    predicted_data = data_df.drop('predict',axis=1)
+    predicted_data['predict'] = predicted_result
+    return predicted_data
+
+def predict_data_dnn(col, raw_data):
+    # df_data = pd.read_csv("data/6-CFD22-1-A37H_balance.csv")
+    # df_data = df_data.drop(["predict"],axis=1)
+    # data = df_data.values.reshape([-1, 100, 5, 1])
+
+    data_df = pd.DataFrame(raw_data, columns=col)
+    data_df.fillna(value=0, inplace=True)
+    if data_df.shape[0]<100:
+        return data_df
+    # item_data = data_df.drop(['status', '日期', 'predict'], axis=1)
+    item_data = data_df.drop(['日期', 'predict'], axis=1)
+    data = item_data.values
+    # # 归一化
+    # print("归一化")
+    # mm = MinMaxScaler()
+    # x = mm.fit_transform(item_data)
+    #
+    # # 读取Model
+    # with open('model/my_model.pickle', 'rb') as f:
+    #     my_model = pickle.load(f)
+    # predicted_result = my_model.predict(x)
+    #
+    # predicted_data = data_df.drop('predict', axis=1)
+    # predicted_data['predict'] = predicted_result
+
+    prelist = []
+    with tf.Session() as sess:
+        saver = tf.train.import_meta_graph('model/model.ckpt-0.meta')
+        ckpt_path = tf.train.latest_checkpoint("model/")
+        saver.restore(sess,ckpt_path)
+
+        train_vars = tf.global_variables()
+        for v in train_vars:
+            print(v.name)
+
+        graph = tf.get_default_graph()
+        x = graph.get_tensor_by_name("x:0")
+        keep_prob = graph.get_tensor_by_name("keep_prob:0")
+        y_conv = graph.get_tensor_by_name("y_conv:0")
+        for i in range(0,data.shape[0]-99):
+            one_data = data[i:i+100]
+            one_data = one_data.reshape([-1, 100, 5, 1])
+            [one_predict] = sess.run([y_conv],feed_dict={x:one_data,keep_prob:1})
+            # print("one_predict:",one_predict)
+            prelist.append(one_predict[0][0])
+        #padding
+        pad = [prelist[0]]*99
+        pad.extend(prelist)
+        predicted_data = data_df.drop('predict', axis=1)
+        predicted_data['predict'] = pad
+
+    return predicted_data
+
+'''保存结果到数据库'''
+def saveDB(col,data,db="Pstatus.db",table=jh):
+    Pdb = DBHandler(db)
+    # 创建表
+    # table_cmd =
+    # status
+    # table_cmd = col[0] + "         INT,"
+    # 日期
+    table_cmd = col[0] + "         text,"
+    for i in range(1,len(col)):
+        table_cmd += col[i] + "    REAL DEFAULT 0,"
+    table_cmd = table_cmd.rstrip(',')
+    print("table_cmd:",table_cmd)
+    Pdb.createTable(table,table_cmd)
+
+    # 插入数据
+    Pdb.insertMany(table,data)
+
+    # 提交
+    Pdb.dbCommit()
+
+    # 查询
+    # des,res = Pdb.queryAll("Pstatus",1000)
+    # print(res)
+
+    # 关闭
+    Pdb.dbClose()
+
+def run_today():
+    now_date = datetime.datetime.now().date()
+    yesterday_date = now_date - datetime.timedelta(days=1)
+    now_string = now_date.strftime("%Y-%m-%d %H:%M:%S")
+    y_string = yesterday_date.strftime("%Y-%m-%d %H:%M:%S")
+
+    col, raw_data = data_api.run(y_string, now_string)
+    if len(raw_data) == 0:
+        return
+    data_df = predict_data_dnn(col, raw_data)
+    # col = data_df.columns.tolist()
+    # print(data_df)
+    # data_df[col[0]] = data_df[col[0]]+" "+data_df[col[1]]
+    # data_df.drop(columns=col[1],inplace=True)
+    # print(data_df)
+    col = data_df.columns.tolist()
+    print(col)
+    data = data_df.values.tolist()
+    print("data[:10]:",data[:10])
+    # jh = "CFD11-1-A16H"
+    saveDB(col,data,"Pstatus.db",jh)
+
+def run_allday():
+    start_date = datetime.datetime.strptime("2020-04-25","%Y-%m-%d").date()
+    end_date = datetime.datetime.strptime("2020-05-20","%Y-%m-%d").date()
+    while start_date < end_date:
+        next_date = start_date + datetime.timedelta(days=1)
+        start_string = start_date.strftime("%Y-%m-%d %H:%M:%S")
+        next_string = next_date.strftime("%Y-%m-%d %H:%M:%S")
+        print("#"*100)
+        print("start_string:",start_string)
+        print("next_string:",next_string)
+        col, raw_data = data_api.run(start_string,next_string)
+        if len(raw_data) == 0:
+            start_date = start_date + datetime.timedelta(days=1)
+            continue
+        data_df = predict_data_dnn(col, raw_data)
+        col = data_df.columns.tolist()
+        print(col)
+        data = data_df.values.tolist()
+        # jh = "CFD11-1-A16H"
+        saveDB(col, data, "Pstatus.db", jh)
+
+        start_date  = start_date + datetime.timedelta(days=1)
+
+def job_test():
+    print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+def crontab_run():
+    print("run_allday")
+    run_allday()
+    print("scheduler start")
+    scheduler = BlockingScheduler()
+    # scheduler.add_job(job_test,'cron',hour=0,minute=0,second=0)
+    scheduler.add_job(run_today, 'cron', hour=6, minute=0, second=0)
+    scheduler.start()
+
+if __name__ == '__main__':
+    # run_today()
+    # run_allday()
+    # train_model()
+    crontab_run()
+    # train_model_dnn()
+    # predict_data_dnn()

@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>ECharts3 Ajax</title>
+</head>
+
+<body>
+    <div>
+        <select  id="sid" onChange="selectcity();">
+   			<option>---请选择---</option>
+   			<option>湖南</option>
+   			<option>湖北</option>
+   			<option>浙江</option>
+   			<option>广东</option>
+   	    </select>
+        <span id="ssid" style="white-space:pre">	</span>
+
+        <script type="text/javascript">
+                function selectcity(){
+                    var citys=[["长沙","益阳","常德","株洲","张家界"],
+                                ["宜昌","武汉","荆门","厂门"],
+                                ["杭州市","宁波市","温州市","嘉兴市"],
+                                ["广州","东莞","深圳","珠海"]
+                    ];
+                    var index1=document.getElementById("sid").selectedIndex;//获得用户在省份组合框所选的选项序号  获得所选项的序列号，方便匹配上面二维数组添加
+                    console.log("index1:",index1);
+                    var option1=document.getElementById("ssid");//添加到该节点下，需要一一循环
+                    option1.options.length=1;//直接设置总长度为1,留一个《请选择》，直接设置长度为1，，可以省去很多移除元素的麻烦
+
+                    for(var x=0;x<citys[index1-1].length;x++){//citys是一个二维数组  lenth citys[index1]
+                        var opt=document.createElement("option");
+                        opt.innerHTML=citys[index1-1][x];
+                        option1.appendChild(opt);
+                    }
+                }
+            </script>
+
+    </div>
+
+    <div>
+        <select id="EffectiveDateSel" onChange="DispayPrice();">
+
+                <option>切换 <b class="caret"></b></option>
+                <option value="121.473701,31.230416,200000">上海市</option>
+                <option value="116.407526,39.90403,100000">北京市</option>
+                <option value="103.826308,36.059421,620100000000">兰州市</option>
+                <option value="113.264434,23.129162,510000">广州市</option>
+
+            </select>
+
+			<span id="cityse"></span>
+
+        <script>
+        function DispayPrice()
+            {
+                var nSel = document.getElementById("EffectiveDateSel");
+                console.log("nSel:",nSel);
+                var index = nSel.selectedIndex; // 选中索引
+                var text = nSel.options[index].text; // 选中文本
+                var value= nSel.options[index].value;
+                document.getElementById("cityse").innerHTML=text+"----"+value;
+
+            }
+        </script>
+
+    </div>
+
+    <div>
+        <a href="/download/CFD11-1-A29H.csv" style="text-decoration:none;" >数据文件下载</a>
+    </div>
+</body>
+</html>
